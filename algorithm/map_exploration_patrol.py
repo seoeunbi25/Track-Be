@@ -22,6 +22,30 @@ REQUIRED_SURVIVOR_COUNT = 3
 # 동쪽 벽이 아래쪽 전체를 막지 않기 때문에 오른쪽 아래를 출구 접근점으로 사용
 EXIT_POINT = (8, -8)
 
+KNOWN_DANGER_POINTS = [
+    (-2.25, 4.30),
+    (-4.86, 8.38),
+    (-0.87, -9.33),
+    (-5.17, -7.59),
+]
+
+KNOWN_SURVIVOR_POINTS = [
+    (-10.31, -6.63),
+    (2.69, 6.27),
+    (8.13, -2.50),
+]
+
+PRIORITY_SURVIVOR_VIEWPOINTS = [
+    (-8.22, -4.40),
+    (7.18, -1.65),
+    (8.28, -4.40),
+    (2.78, 3.85),
+    (2.78, 8.25),
+]
+
+PRIORITY_VIEWPOINT_MATCH_DISTANCE = 0.9
+SURVIVOR_INSPECTION_DISTANCE = 4.0
+
 # /map에서 waypoint를 생성할 순찰 범위
 # 외곽 벽과 너무 붙지 않도록 -9~9로 제한
 PATROL_MIN_X = -9.0
@@ -880,10 +904,8 @@ class MapExplorationPatrol(BasicNavigator):
         print("\nExploration patrol started.")
         print(f"Required survivors: {REQUIRED_SURVIVOR_COUNT}")
         print(f"Total patrol waypoints: {len(self.patrol_waypoints)}")
-        print(f"Exit candidates: {EXIT_CANDIDATES}")
+        print(f"Exit point: ({EXIT_POINT[0]:.2f}, {EXIT_POINT[1]:.2f})")
 
-        # 핵심 변경:
-        # 기존처럼 index를 순환시키지 않고, 미방문 waypoint를 하나씩 제거하면서 진행
         unvisited_waypoints = self.patrol_waypoints.copy()
         visited_count = 0
 
@@ -892,7 +914,6 @@ class MapExplorationPatrol(BasicNavigator):
                 print("All survivors found. Leaving patrol loop.")
                 break
 
-            # 현재 위치 기준 가장 가까운 미방문 waypoint를 선택
             if self.current_robot_position is not None:
                 next_point = min(
                     unvisited_waypoints,
@@ -901,22 +922,18 @@ class MapExplorationPatrol(BasicNavigator):
             else:
                 next_point = unvisited_waypoints[0]
 
-            unvisited_waypoints.remove(next_point)
-            visited_count += 1
-
             label = (
                 f"patrol waypoint {visited_count + 1}/"
                 f"{len(self.patrol_waypoints)}"
             )
 
-            # 산불 근처 waypoint는 가지 않고 바로 버림
             if self.is_waypoint_near_danger(next_point):
                 print(
                     f"\nSkipping {label}: "
                     f"({next_point[0]:.2f}, {next_point[1]:.2f}) "
-                    f"because it is {skip_reason}."
+                    "because it is near detected danger."
                 )
-                unvisited_waypoints.pop(0)
+                unvisited_waypoints.remove(next_point)
                 self.mark_patrol_point_done(next_point, "skipped")
                 visited_count += 1
                 continue
@@ -932,28 +949,26 @@ class MapExplorationPatrol(BasicNavigator):
                 break
 
             if reached:
-                unvisited_waypoints.pop(0)
+                unvisited_waypoints.remove(next_point)
                 self.mark_patrol_point_done(next_point, "reached")
                 visited_count += 1
             elif reason in ("near_danger", "near_danger_path", "path_failed", "failed"):
-                unvisited_waypoints.pop(0)
+                unvisited_waypoints.remove(next_point)
                 self.mark_patrol_point_done(next_point, reason)
                 visited_count += 1
                 print("Dropping unreachable or unsafe waypoint.")
             elif reason in ("danger_detected", "too_close_to_danger"):
-                postponed_point = unvisited_waypoints.pop(0)
-                if self.is_waypoint_in_replan_drop_zone(postponed_point):
-                    self.mark_patrol_point_done(postponed_point, reason)
+                if self.is_waypoint_in_replan_drop_zone(next_point):
+                    self.mark_patrol_point_done(next_point, reason)
                     visited_count += 1
                     print(
                         "Dropping current waypoint after danger replanning "
                         "because it is near danger or already effectively searched."
                     )
                 else:
-                    unvisited_waypoints.append(postponed_point)
                     print("Postponing current waypoint after danger replanning.")
             else:
-                unvisited_waypoints.pop(0)
+                unvisited_waypoints.remove(next_point)
                 self.mark_patrol_point_done(next_point, reason)
                 visited_count += 1
                 print("Skipping or replanning from unreachable/danger waypoint.")
@@ -970,36 +985,18 @@ class MapExplorationPatrol(BasicNavigator):
             print("Mission failed: not enough survivors detected.")
             print("All generated patrol waypoints were already visited or skipped.")
             return
+
         print("\nMoving to final exit...")
 
-        exit_reached = False
-
-        for i, exit_point in enumerate(EXIT_CANDIDATES, start=1):
-            print(
-                f"\nTrying exit candidate {i}/{len(EXIT_CANDIDATES)}: "
-                f"({exit_point[0]:.2f}, {exit_point[1]:.2f})"
-            )
-
-            self.found_all_survivors = False
-            self.danger_detected_during_current_goal = False
-            self.too_close_to_danger = False
-            self.cancel_requested = False
-
-        exit_reached = self.go_to_single_goal(
+        reached, reason = self.go_to_single_goal(
             EXIT_POINT,
             "exit",
             EXIT_CLOSE_ENOUGH_DISTANCE,
         )
 
-            if exit_reached:
-                print(f"Exit reached using candidate {i}.")
-                break
-
-            print(f"Exit candidate {i} failed. Trying next candidate...")
-
         print("\nNavigation finished.")
 
-        if exit_reached:
+        if reached:
             print("Mission succeeded: 3 survivors detected and exit reached.")
         else:
             print("Mission failed: exit was not reached.")
