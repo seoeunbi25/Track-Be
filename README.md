@@ -90,6 +90,14 @@ Track-Be는 이러한 문제를 해결하기 위해 다음과 같은 기능을 �
 
 ---
 
+# 🧭 State Diagram
+
+<div align="center">
+  <img src="docs/State_Diagram.png" width="750"/>
+</div>
+
+---
+
 
 # 🛠️ Tech Stack
 
